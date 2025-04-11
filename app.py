@@ -2,74 +2,68 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
 
-st.title("IPL Team Score Predictor (CSV-Based)")
+st.title("IPL Team Score Predictor")
 
 st.write("""
-Upload a CSV file with IPL ball-by-ball data. The app will train a simple model 
-on-the-fly to predict the **final innings score** based on team and innings info.
+This app uses historical IPL data to train a model that predicts the **final innings score**
+based on the selected team and innings.
 """)
 
-uploaded_file = st.file_uploader("Upload IPL CSV", type=["csv"])
+# Load your uploaded IPL.csv data
+df = pd.read_csv("IPL.csv")
 
-if uploaded_file:
-    df = pd.read_csv(uploaded_file)
+# Basic cleaning
+df["extra_type"].fillna("None", inplace=True)
+df["player_out"].fillna("None", inplace=True)
+df["kind"].fillna("None", inplace=True)
+df["fielders_involved"].fillna("None", inplace=True)
 
-    # Basic cleaning
-    df["extra_type"].fillna("None", inplace=True)
-    df["player_out"].fillna("None", inplace=True)
-    df["kind"].fillna("None", inplace=True)
-    df["fielders_involved"].fillna("None", inplace=True)
+# Create 'ball_id' to represent ball number within innings
+df["ball_id"] = df.groupby(["ID", "innings"]).cumcount() + 1
 
-    # Add innings total per match/team
-    df["ball_id"] = df.groupby(["ID", "innings"]).cumcount() + 1
-    innings_summary = df.groupby(["ID", "BattingTeam", "innings"]).agg({
-        "total_run": "sum",
-        "ball_id": "max",
-        "isWicketDelivery": "sum"
-    }).reset_index()
+# Aggregate innings summary
+innings_summary = df.groupby(["ID", "BattingTeam", "innings"]).agg({
+    "total_run": "sum",
+    "ball_id": "max",
+    "isWicketDelivery": "sum"
+}).reset_index()
 
-    innings_summary.rename(columns={
-        "total_run": "final_score",
-        "ball_id": "total_balls",
-        "isWicketDelivery": "wickets_lost"
-    }, inplace=True)
+innings_summary.rename(columns={
+    "total_run": "final_score",
+    "ball_id": "total_balls",
+    "isWicketDelivery": "wickets_lost"
+}, inplace=True)
 
-    # Feature encoding
-    team_names = innings_summary["BattingTeam"].unique()
-    team = st.selectbox("Select Batting Team", team_names)
-    inning = st.selectbox("Select Innings", [1, 2])
+# Team and innings selection
+team_names = innings_summary["BattingTeam"].unique()
+team = st.selectbox("Select Batting Team", sorted(team_names))
+inning = st.selectbox("Select Innings", [1, 2])
 
-    # Model training
-    X = innings_summary[["total_balls", "wickets_lost", "innings"]]
-    y = innings_summary["final_score"]
+# Model training
+X = innings_summary[["total_balls", "wickets_lost", "innings"]]
+y = innings_summary["final_score"]
+model = LinearRegression()
+model.fit(X, y)
 
-    model = LinearRegression()
-    model.fit(X, y)
+# Make prediction when button clicked
+if st.button("Predict Score"):
+    team_data = innings_summary[
+        (innings_summary["BattingTeam"] == team) &
+        (innings_summary["innings"] == inning)
+    ]
 
-    # Predict
-    if st.button("Predict Score"):
-        # Estimate a sample input (example: team in 2nd innings with average stats)
-        team_data = innings_summary[
-            (innings_summary["BattingTeam"] == team) &
-            (innings_summary["innings"] == inning)
-        ]
+    if not team_data.empty:
+        avg_balls = int(team_data["total_balls"].mean())
+        avg_wickets = int(team_data["wickets_lost"].mean())
 
-        if not team_data.empty:
-            avg_balls = int(team_data["total_balls"].mean())
-            avg_wickets = int(team_data["wickets_lost"].mean())
+        input_df = pd.DataFrame([[avg_balls, avg_wickets, inning]],
+                                columns=["total_balls", "wickets_lost", "innings"])
+        prediction = int(model.predict(input_df)[0])
 
-            input_df = pd.DataFrame([[avg_balls, avg_wickets, inning]],
-                                    columns=["total_balls", "wickets_lost", "innings"])
-            prediction = int(model.predict(input_df)[0])
-
-            st.subheader("Prediction Result")
-            st.write(f"**Team:** {team}")
-            st.write(f"**Innings:** {inning}")
-            st.write(f"**Predicted Final Score:** {prediction} runs")
-        else:
-            st.warning("Not enough data for selected team and innings.")
-
-else:
-    st.info("Please upload a CSV file to get started.")
+        st.subheader("Prediction Result")
+        st.write(f"**Team:** {team}")
+        st.write(f"**Innings:** {inning}")
+        st.write(f"**Predicted Final Score:** {prediction} runs")
+    else:
+        st.warning("Not enough data for selected team and innings.")
